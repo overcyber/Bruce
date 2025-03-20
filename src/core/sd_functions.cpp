@@ -32,19 +32,35 @@ bool setupSdCard() {
     sdcardMounted = false;
     return false;
   }
-
   // avoid unnecessary remounting
-if(sdcardMounted) return true;
+  if(sdcardMounted) return true;
+  #ifdef USE_TFT_eSPI_TOUCH
+  bool task=true;
+  #else
+  bool task=false;
+  #endif
 
-#if TFT_MOSI == SDCARD_MOSI && TFT_MOSI>0
-  if (!SD.begin(SDCARD_CS, tft.getSPIinstance()))
-#else
-  sdcardSPI.end();
-  sdcardSPI.begin(SDCARD_SCK, SDCARD_MISO, SDCARD_MOSI, SDCARD_CS); // start SPI communications
-  delay(10);
-  if (!SD.begin(SDCARD_CS, sdcardSPI))
-#endif
-  {
+  bool result = true;
+  if(task) {  // Not using InputHandler (SdCard on default &SPI bus)
+    if (!SD.begin(SDCARD_CS)) result = false;
+  } 
+  else if(bruceConfig.SDCARD_bus.mosi == (gpio_num_t)TFT_MOSI && bruceConfig.SDCARD_bus.mosi!=GPIO_NUM_NC) { // SDCard in the same Bus as TFT, in this case we call the SPI TFT Instance
+    #if TFT_MOSI>0 // condition for Headless and 8bit displays (no SPI bus)
+    if (!SD.begin(SDCARD_CS, tft.getSPIinstance())) result = false;
+    #else
+    goto NEXT; // destination for Headless and 8bit displays (no SPI bus)
+    #endif
+    
+  } 
+  else { // If not using TFT Bus, use a specific bus
+    NEXT: 
+    sdcardSPI.end();
+    sdcardSPI.begin(SDCARD_SCK, SDCARD_MISO, SDCARD_MOSI, SDCARD_CS); // start SPI communications
+    delay(10);
+    if (!SD.begin(SDCARD_CS, sdcardSPI)) result = false;
+  }
+
+  if(result==false) {
     #if defined(ARDUINO_M5STICK_C_PLUS) || defined(ARDUINO_M5STICK_C_PLUS2)
       sdcardSPI.end(); // Closes SPI connections and release pin header.
     #endif
@@ -139,23 +155,23 @@ bool renameFile(FS fs, String path, String filename) {
 ***************************************************************************************/
 bool copyToFs(FS from, FS to, String path, bool draw) {
   // Using Global Buffer
-  bool result;
+  bool result=false;
   if(!sdcardMounted) { Serial.println("Error 0"); return false; }
 
-  if (!SD.begin()) { sdcardMounted=false; result = false; Serial.println("Error 1"); }
-  if(!LittleFS.begin()) { result = false; Serial.println("Error 2"); }
+  if (!SD.begin()) { sdcardMounted=false; Serial.println("Error 1"); return false;  }
+  if(!LittleFS.begin()) { Serial.println("Error 2"); return false; }
 
   File source = from.open(path, FILE_READ);
   if (!source) {
     Serial.println("Error 3");
-    result = false;
+    return false;
   }
   path = path.substring(path.lastIndexOf('/'));
   if(!path.startsWith("/")) path = "/" + path;
   File dest = to.open(path, FILE_WRITE);
   if (!dest) {
     Serial.println("Error 4");
-    result = false;
+    return false;
   }
   size_t bytesRead;
   int tot=source.size();
@@ -171,8 +187,8 @@ bool copyToFs(FS from, FS to, String path, bool draw) {
       //Serial.println("Falha ao escrever no arquivo de destino");
       source.close();
       dest.close();
-      result = false;
       Serial.println("Error 5");
+      return false;
     } else {
       prog+=bytesRead;
       float rad = 360*prog/tot;
@@ -180,9 +196,8 @@ bool copyToFs(FS from, FS to, String path, bool draw) {
     }
   }
   if(prog==tot) result = true;
-  else { result = false; displayError("Error 6"); }
+  else { displayError("Fail Copying File",true); return false;}
 
-  if(!result) delay(5000);
   return result;
 }
 
@@ -348,13 +363,16 @@ String crc32File(FS &fs, String filepath) {
 ** Function name: sortList
 ** Description:   sort files for name
 ***************************************************************************************/
-bool sortList(const FileList& a, const FileList& b) {
-    // Order items alfabetically
-    String fa=a.filename.c_str();
-    fa.toUpperCase();
-    String fb=b.filename.c_str();
-    fb.toUpperCase();
-    return fa < fb;
+bool sortList(const FileList &a, const FileList &b) {
+  if (a.folder != b.folder) {
+    return a.folder > b.folder; // true if a is a folder and b is not
+  }
+  // Order items alfabetically
+  String fa = a.filename.c_str();
+  fa.toUpperCase();
+  String fb = b.filename.c_str();
+  fb.toUpperCase();
+  return fa < fb;
 }
 
 /***************************************************************************************
@@ -379,66 +397,49 @@ bool checkExt(String ext, String pattern) {
 ** Description:   sort files for name
 ***************************************************************************************/
 void readFs(FS fs, String folder, String allowed_ext) {
-    int allFilesCount = 0;
-    fileList.clear();
-    FileList object;
+  int allFilesCount = 0;
+  fileList.clear();
+  FileList object;
 
-    File root = fs.open(folder);
-    if (!root || !root.isDirectory()) {
-        //Serial.println("Não foi possível abrir o diretório");
-        return; // Retornar imediatamente se não for possível abrir o diretório
+  File root = fs.open(folder);
+  if (!root || !root.isDirectory()) {
+    return;
+  }
+
+  File file = root.openNextFile();
+  while (file && ESP.getFreeHeap() > 1024) {
+    String fileName = file.name();
+    if (file.isDirectory()) {
+      object.filename = fileName.substring(fileName.lastIndexOf("/") + 1);
+      object.folder = true;
+      object.operation = false;
+      fileList.push_back(object);
+    } else {
+      String ext = fileName.substring(fileName.lastIndexOf(".") + 1);
+      if (allowed_ext == "*" || checkExt(ext, allowed_ext)) {
+        object.filename = fileName.substring(fileName.lastIndexOf("/") + 1);
+        object.folder = false;
+        object.operation = false;
+        fileList.push_back(object);
+      }
     }
+    file = root.openNextFile();
+  }
+  file.close();
+  root.close();
 
-    //Add Folders to the list
-    File file = root.openNextFile();
-    while (file && ESP.getFreeHeap()>1024) {
-        String fileName = file.name();
-        if (file.isDirectory()) {
-            object.filename = fileName.substring(fileName.lastIndexOf("/") + 1);
-            object.folder = true;
-            object.operation=false;
-            fileList.push_back(object);
-        }
-        file = root.openNextFile();
-    }
-    file.close();
-    root.close();
-    // Sort folders
-    std::sort(fileList.begin(), fileList.end(), sortList);
-    int new_sort_start=fileList.size();
+  // Sort folders/files
+  std::sort(fileList.begin(), fileList.end(), sortList);
 
-    //Add files to the list
-    root = fs.open(folder);
-    File file2 = root.openNextFile();
-    while (file2) {
-        String fileName = file2.name();
-        if (!file2.isDirectory()) {
-            String ext = fileName.substring(fileName.lastIndexOf(".") + 1);
-            if (allowed_ext=="*" || checkExt(ext, allowed_ext)) {
-              object.filename = fileName.substring(fileName.lastIndexOf("/") + 1);
-              object.folder = false;
-              object.operation=false;
-              fileList.push_back(object);
-            }
-        }
-        file2 = root.openNextFile();
-    }
-    file2.close();
-    root.close();
+  Serial.println("Files listed with: " + String(fileList.size()) +
+                 " files/folders found");
 
-    //
-    Serial.println("Files listed with: " + String(fileList.size()) + " files/folders found");
+  // Adds Operational btn at the botton
+  object.filename = "> Back";
+  object.folder = false;
+  object.operation = true;
 
-    // Order file list
-    std::sort(fileList.begin()+new_sort_start, fileList.end(), sortList);
-
-    // Adds Operational btn at the botton
-    object.filename = "> Back";
-    object.folder=false;
-    object.operation=true;
-
-    fileList.push_back(object);
-
+  fileList.push_back(object);
 }
 
 /*********************************************************************
@@ -455,6 +456,7 @@ String loopSD(FS &fs, bool filePicker, String allowed_ext, String rootPath) {
   String Folder = rootPath;
   String PreFolder = rootPath;
   tft.fillScreen(bruceConfig.bgColor);
+  tft.fillScreen(bruceConfig.bgColor);// TODO: Does only the T-Embed CC1101 need this?
   tft.drawRoundRect(5,5,tftWidth-10,tftHeight-10,5,bruceConfig.priColor);
   if(&fs==&SD) {
     if(!setupSdCard()){
@@ -615,13 +617,8 @@ String loopSD(FS &fs, bool filePicker, String allowed_ext, String rootPath) {
           if(&fs == &LittleFS && sdcardMounted) options.push_back({"Copy->SD", [=]() { copyToFs(LittleFS, SD, filepath); }});
 
           // custom file formats commands added in front
-          if(filepath.endsWith(".jpg")) options.insert(options.begin(), {"View Image",  [&]() {
-              showJpeg(fs, filepath, 0, 0, true);
-              delay(750);
-              while(!check(AnyKeyPress)) yield();
-            }});
-          if(filepath.endsWith(".gif")) options.insert(options.begin(), {"View Image",  [&]() {
-              showGif(&fs, filepath.c_str(), 0, 0, true, -1);
+          if(filepath.endsWith(".jpg") || filepath.endsWith(".gif") || filepath.endsWith(".bmp") || filepath.endsWith(".png")) options.insert(options.begin(), {"View Image",  [&]() {
+              drawImg(fs, filepath, 0, 0, true,-1);
               delay(750);
               while(!check(AnyKeyPress)) yield();
             }});

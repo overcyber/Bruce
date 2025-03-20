@@ -49,7 +49,36 @@ IrRead::IrRead(bool headless_mode, bool raw_mode) {
     raw = raw_mode;
     setup();
 }
-
+bool quickloop = false;
+int button_pos = 0;
+static char* quickButtons[] = {
+    "POWER",
+    "UP",
+    "DOWN",
+    "LEFT",
+    "RIGHT",
+    "OK",
+    "SOURCES",
+    "VOL+",
+    "VOL-",
+    "CHA+",
+    "CHA-",
+    "SETTINGS",
+    "NETFLIX",
+    "HOME",
+    "BACK",
+    "EXIT",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "0"
+};
 void IrRead::setup() {
     irrecv.enableIRIn();
 
@@ -64,19 +93,30 @@ void IrRead::setup() {
     pinMode(bruceConfig.irRx, INPUT);
     if(headless) return;
     // else
-    begin();
-    return loop();
+    returnToMenu = true;  // make sure menu is redrawn when quitting in any point
+    options = {
+        {"Custom Read", [&]() { begin(); return loop(); }},
+        {"Quick Remote Setup  ", [&]() { quickloop = true; begin(); return loop();}},
+        {"Menu", []() { }},
+    };
+    loopOptions(options);
+    
 }
+
 
 void IrRead::loop() {
     while(1) {
         if (check(EscPress)) {
             returnToMenu=true;
+            button_pos = 0;
+            quickloop = false;
             break;
         }
-
-        if (check(SelPress)) save_device();
         if (check(NextPress)) save_signal();
+        if (button_pos == (sizeof(quickButtons) / sizeof(quickButtons[0]))) {
+            save_device();
+        }
+        if (check(SelPress)) save_device();
         if (check(PrevPress)) discard_signal();
 
         read_signal();
@@ -87,7 +127,13 @@ void IrRead::begin() {
     _read_signal = false;
 
     display_banner();
-    padprintln("Waiting for signal...");
+    if (quickloop) {
+        padprintln("Waiting for signal of button: " + String(quickButtons[button_pos]));
+    }
+    else {
+        padprintln("Waiting for signal...");
+    }
+    
     tft.println("");
     display_btn_options();
 
@@ -137,7 +183,7 @@ void IrRead::read_signal() {
     // Dump of signal details
     padprint("RAW Data Captured:");
     String raw_signal = parse_raw_signal();
-    tft.println(raw_signal);  // Shows the RAW signal on the display
+    tft.println(raw_signal.substring(0, 45) + (raw_signal.length() > 45 ? "..." : ""));  // Shows the RAW signal on the display
     Serial.println(raw_signal);  // Print RAW signal to serial monitor
 
     display_btn_options();
@@ -153,13 +199,14 @@ void IrRead::discard_signal() {
 
 void IrRead::save_signal() {
     if (!_read_signal) return;
-
-    String btn_name = keyboard("Btn"+String(signals_read), 30, "Btn name:");
-
-    append_to_file_str(btn_name);
-
+    if (!quickloop) {
+        String btn_name = keyboard("Btn"+String(signals_read), 30, "Btn name:");
+        append_to_file_str(btn_name);
+    } else {
+        append_to_file_str(quickButtons[button_pos]);
+    }
     signals_read++;
-
+    if (quickloop) button_pos++;
     discard_signal();
     delay(100);
 }
@@ -372,12 +419,51 @@ bool IrRead::write_file(String filename, FS* fs) {
     if (fs == nullptr) return false;
 
     if (!(*fs).exists("/BruceIR")) (*fs).mkdir("/BruceIR");
+        
+    while ((*fs).exists("/BruceIR/" + filename + ".ir")) {
+        int ch = 1;
+        int i = 1;
+
+        displayWarning("File \"" + String(filename) + "\" already exists", true);
+        display_banner();
+
+        // ask to choose one
+        options = {
+            {"Append number",  [&]()   {  ch=1; }},
+            {"Overwrite ",     [&]()   {  ch=2; }},
+            {"Change name",    [&]()   {  ch=3; }},
+        };
+        
+        loopOptions(options);
+
+        switch(ch)
+        {
+            case 1:
+                filename += "_";
+                while((*fs).exists("/BruceIR/" + filename + String(i) + ".ir")) i++;
+                filename += String(i);
+                break;
+            case 2:
+                (*fs).remove("/BruceIR/" + filename + ".ir");
+                break;
+            case 3:
+                filename = keyboard(filename, 30, "File name:");
+                display_banner();
+                break;
+        }
+    }
+
+    /*
+    /Old "Add num index" solution 
+
     if ((*fs).exists("/BruceIR/" + filename + ".ir")) {
         int i = 1;
         filename += "_";
         while((*fs).exists("/BruceIR/" + filename + String(i) + ".ir")) i++;
         filename += String(i);
     }
+    */
+
     File file = (*fs).open("/BruceIR/"+ filename + ".ir", FILE_WRITE);
 
     if(!file) {

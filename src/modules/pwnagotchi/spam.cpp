@@ -149,7 +149,7 @@ void beacon_task(void* pvParameters) {
 }
 
 void displaySpamStatus() {
-  tft.fillScreen(TFT_BLACK);
+  tft.fillScreen(bruceConfig.bgColor);
   drawTopCanvas();
   drawBottomCanvas();
   tft.fillRect(0, 20, tftWidth, tftHeight - 40, bruceConfig.bgColor);
@@ -227,7 +227,7 @@ void loadFacesAndNames() {
     look_for_file = true;
     options.push_back({"SD Card", [&](){ fs=&SD; look_for_file = true; }});
   }
-  if (checkLittleFsSizeNM) {
+  if (checkLittleFsSizeNM()) {
     look_for_file = true;
     options.push_back({"LittleFS faces", [&](){ fs=&LittleFS; look_for_file = true;}});
   }
@@ -257,13 +257,16 @@ Default: // This is default pwngrid faces to spam, removing the necessity to hav
     i=0;
     names[i++]="my name is... BRUCE!";
     names[i++]="Check M5 Bruce Project";
-    names[i++]="┌∩┐(◣_◢)┌∩┐","(╯°□°)╯╭╮(XoX)";
+    names[i++]="┌∩┐(◣_◢)┌∩┐";
+    names[i++]="(╯°□°)╯╭╮(XoX)";
     names[i++]="STOP DEAUTH SKIDZ!";
     names[i++]="System Breached oups";
     names[i++]="Unauthorized  Access";
     names[i++]="Security  Compromised.. reboot";
-    names[i++]="Warning...Bruce's here","Critical Error need reboot";
-    names[i++]="No more Battery","Never gonna give you up";
+    names[i++]="Warning...Bruce's here";
+    names[i++]="Critical Error need reboot";
+    names[i++]="No more Battery";
+    names[i++]="Never gonna give you up";
     names[i++]="Never gonna let you down";
     names[i++]="Never gonna run around";
     names[i++]="and desert you";
